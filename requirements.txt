@@ -1,0 +1,7 @@
+openai-agents>=0.1.0
+nba_api>=1.4
+basketball-reference-scraper>=0.4
+gnews>=0.3
+streamlit>=1.30
+python-dotenv>=1.0
+pydantic>=2.0
