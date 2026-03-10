@@ -7,6 +7,7 @@ AI-powered NBA player prop prediction system using multi-agent architecture. Ent
 - **Multi-agent pipeline**: Stats Agent, News Agent, and Prediction Agent work together
 - **Real-time data**: Live NBA stats via `nba_api`, real-time news via web search
 - **Parlay support**: Analyze multi-leg parlays with correlation detection
+- **Self-improving**: Automatically grades predictions against real results and tunes its own parameters every 3 days
 - **Defensive matchup analysis**: Identifies key defender status, team defense quality, pace
 - **Hit rate tracking**: "Player went over X in Y% of games" at season/recent/vs-team levels
 - **Combo stats**: PRA, PR, PA, RA, STOCKS computed automatically
@@ -79,6 +80,89 @@ For parlays, all legs run in parallel (a 3-leg parlay takes ~2 min, not 3x a sin
 | Rebounds + Assists | `ra`, `rebounds assists` |
 | Steals + Blocks | `stocks`, `steals blocks` |
 
+## Self-Improving Pipeline
+
+The system runs autonomously in the background — fetching real DraftKings prop lines, making predictions, grading them against actual game results, and self-tuning its prediction weights every 3 days.
+
+### How Self-Improvement Works
+
+```
+Daily Cycle:
+  4:00 PM ET  →  Fetch DraftKings props for top 3 games
+                 Run prediction pipeline for each player prop
+                 Store predictions + odds in Supabase
+
+  8:00 AM ET  →  Fetch actual box scores from nba_api
+  (next day)     Grade each prediction: HIT / MISS / PUSH
+                 Log daily accuracy metrics
+
+Every 3 Days:
+  9:00 AM ET  →  Self-Improvement Agent analyzes accuracy data:
+                 - Hit rate by confidence level (HIGH/MEDIUM/LOW)
+                 - Hit rate by stat type (points/rebounds/assists/threes)
+                 - Hit rate by direction (OVER vs UNDER)
+                 - Worst misses (high confidence + wrong)
+                 Adjusts prediction weights:
+                 - Factor weights (base rate, matchup, defense, form, context)
+                 - Confidence thresholds
+                 - Hit rate signal thresholds
+                 - Defense rating thresholds
+                 Stores new instruction version in Supabase
+```
+
+### Setup
+
+1. Create a [Supabase](https://supabase.com) project and run `supabase_schema.sql` in the SQL Editor
+2. Get a free API key from [The Odds API](https://the-odds-api.com)
+3. Add to your `.env` file:
+   ```
+   SUPABASE_URL=https://your-project.supabase.co
+   SUPABASE_KEY=your-anon-key
+   ODDS_API_KEY=your-odds-api-key
+   ```
+
+### Pipeline Commands
+
+```bash
+python run_pipeline.py seed      # Store initial instruction version (run once)
+python run_pipeline.py predict   # Fetch today's DraftKings props + run predictions
+python run_pipeline.py grade     # Grade yesterday's predictions vs actual box scores
+python run_pipeline.py improve   # Analyze accuracy + self-tune prediction weights
+python run_pipeline.py status    # Show accuracy metrics + credit usage
+python run_pipeline.py loop      # Run continuously on schedule (background)
+```
+
+### Running in the Background
+
+The pipeline needs to stay running to operate on schedule. Use `nohup` to keep it alive after closing your terminal:
+
+```bash
+# Start the loop in the background
+nohup python -u run_pipeline.py loop > pipeline.log 2>&1 &
+
+# Check the logs
+tail -f pipeline.log
+
+# Check if it's running
+ps aux | grep run_pipeline
+
+# Stop it
+kill $(ps aux | grep 'run_pipeline.py loop' | grep -v grep | awk '{print $2}')
+```
+
+Or if you have `tmux` installed:
+```bash
+brew install tmux
+tmux new -s pipeline
+python run_pipeline.py loop
+# Press Ctrl+B then D to detach (it keeps running)
+# Reconnect later: tmux attach -t pipeline
+```
+
+### Credit Budget
+
+Uses The Odds API free tier (500 credits/month). Fetches 4 markets (points, rebounds, assists, threes) for top 3 games/day = 12 credits/day = ~360/month with a 140-credit buffer.
+
 ## Project Structure
 
 ```
@@ -94,8 +178,18 @@ tools/               # Data tools
   news_tools.py      # News search via GNews + ESPN
   cache.py           # In-memory TTL cache
 
-main.py              # CLI entry point
+pipeline/            # Self-improving pipeline
+  config.py          # Supabase + Odds API configuration
+  db.py              # Supabase CRUD operations
+  odds_fetcher.py    # Fetch DraftKings props from The Odds API
+  result_grader.py   # Grade predictions vs actual box scores
+  self_improver.py   # LLM agent that tunes prediction weights
+  runner.py          # Orchestrate predict/grade/improve phases
+
+main.py              # CLI entry point (single predictions)
 app.py               # Streamlit web UI
+run_pipeline.py      # CLI entry point (automated pipeline)
+supabase_schema.sql  # Database schema for Supabase
 ```
 
 ## Requirements
@@ -103,6 +197,8 @@ app.py               # Streamlit web UI
 - Python 3.10+
 - OpenAI API key (uses GPT models via OpenAI Agents SDK)
 - Internet connection (for NBA stats API and news search)
+- Supabase account (free tier, for pipeline mode)
+- The Odds API key (free tier, 500 credits/month, for pipeline mode)
 
 ## Disclaimer
 
